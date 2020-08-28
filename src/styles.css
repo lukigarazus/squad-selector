@@ -1,0 +1,14 @@
+.App {
+  font-family: sans-serif;
+  text-align: center;
+}
+
+.participants__container {
+  display: inline-block;
+}
+
+.participants {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 250px);
+  margin: auto;
+}
