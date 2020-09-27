@@ -16,7 +16,8 @@
     "react-dom": "^16.12.0",
     "react-scripts": "^3.4.3",
     "models": "1.0.0",
-    "socket.io-client": "^2.3.0"
+    "socket.io-client": "^2.3.0",
+    "mobx-websocket": "^0.0.1"
   },
   "devDependencies": {
     "@types/lodash.debounce": "^4.0.6",

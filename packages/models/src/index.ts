@@ -1,17 +1,15 @@
-import { observable } from "mobx";
-import { sync, syncInRoom, SharedState, syncable } from "./mobxWebsocket";
-
-// class RoomMemberModel {
-//   public playersSet = new ObservableSet<string>();
-//   public hasTurn = false;
-
-//   constructor(public user: UserModel) {}
-
-//   @computed
-//   public get players() {
-//     return Array.from(this.playersSet) as string[];
-//   }
-// }
+import { observable, computed } from "mobx";
+import {
+  sync,
+  syncInRoom,
+  SharedState,
+  syncable,
+  shareableState,
+  ExecutionSide,
+  generateID,
+  NoIntantiateEmit,
+} from "mobx-websocket";
+import { IEmitter } from "mobx-websocket/dist/types";
 
 // class RoomModel {
 //   private usedPlayers = new ObservableSet<string>();
@@ -63,105 +61,160 @@ import { sync, syncInRoom, SharedState, syncable } from "./mobxWebsocket";
 //   }
 // }
 
-// class UserModel {
-//   public room: RoomModel | void = undefined;
-//   public active: boolean = true;
-
-//   constructor(public name: string) {}
-
-//   public setActive = (active: boolean) => {
-//     this.active = active;
-//   };
-
-//   public setRoom = (room: RoomModel | void) => {
-//     this.room = room;
-//   };
-// }
-
-// export enum MessageEnum {
-//   DeleteUserModel,
-// }
-
-// class AppModel {
-//   @observable
-//   public users = new ObservableMap<string, UserModel>();
-
-//   @observable
-//   public rooms = new ObservableMap<string, RoomModel>();
-
-//   public emit?: (channel: string, data: any) => void;
-
-//   constructor(emit?: (channel: string, data: any) => void) {
-//     this.emit = emit;
-//   }
-
-//   public deleteUser(name: string) {
-//     const userObj = this.users.get(name);
-//     this.users.delete(name);
-//     if (userObj && userObj.room) {
-//       const roomObj = this.rooms.get(userObj.room.name);
-//       roomObj && roomObj.deleteParticipant(userObj);
-//     }
-//   }
-
-//   public addUser = (name: string) => {
-//     if (this.users.has(name)) return { error: "Username taken" };
-//     const userObj = new UserModel(name);
-//     this.users.set(name, userObj);
-//     if (this.emit) this.emit("add user", name);
-//     return userObj;
-//   };
-
-//   public addRoom(roomName: string) {
-//     this.rooms.set(roomName, new RoomModel(roomName));
-//   }
-
-//   public deleteRoom(roomName: string) {
-//     this.rooms.delete(roomName);
-//   }
-
-//   public addUserToRoom(roomName: string, user: UserModel) {
-//     const roomObj = this.rooms.get(roomName);
-//     roomObj && roomObj.addParticipant(user);
-//   }
-
-//   public disconnectUser(name: string) {
-//     const userObj = this.users.get(name);
-//     userObj && userObj.setActive(false);
-//   }
-// }
-
-// export { RoomModel, RoomMemberModel, AppModel, UserModel };
-
-export class Test extends SharedState {
-  static syncState = (
-    stateToBeSynced: { [key: string]: any },
-    instance: Test
-  ) => {
-    console.log("HERE");
-    instance.setTest(stateToBeSynced.test);
-  };
-
-  @syncable
+@shareableState
+export class RoomMemberModel extends SharedState {
   @observable
-  public test = 2;
-  @observable
-  public roomTest = 2;
+  public playersSet = new Set();
 
-  @sync
-  public setTest(v: number) {
-    this.test = v;
+  @syncable()
+  public hasTurn = false;
+
+  public user?: UserModel;
+
+  constructor(args: { userId: string; emitter: IEmitter }) {
+    super({ id: args.userId, emitter: args.emitter });
+    const user = UserModel.instances[args.userId];
+
+    if (user) this.user = user;
   }
 
-  @syncInRoom("testRoom")
-  public setRoomTest(v: number) {
-    console.log("SET ROOM");
-    this.roomTest = v;
+  @computed
+  public get players() {
+    return Array.from(this.playersSet) as string[];
+  }
+}
+@shareableState
+export class UserModel extends SharedState {
+  @syncable()
+  public active = true;
+
+  public socketId: string;
+
+  public timeout: number | void = undefined;
+
+  @syncable()
+  public roomId: string | void = undefined;
+
+  constructor({ socketId, ...args }: any) {
+    super({ ...args });
+    this.socketId = socketId;
+  }
+}
+@shareableState
+export class RoomModel extends SharedState {
+  public getSyncStateObject = () => {
+    return { members: Object.values(this.members).map((member) => member.id) };
+  };
+
+  public handleSyncStateObject = (obj: any) => {
+    obj.members.forEach((id: any) => {
+      if (!this.members[id]) {
+        this.addUser(id);
+      }
+    });
+  };
+
+  @observable
+  public members: Record<string, RoomMemberModel> = {};
+
+  @sync()
+  public addUser(id: string) {
+    const roomMember = new RoomMemberModel({
+      userId: id,
+      emitter: this.emitter,
+      // @ts-ignore
+      [NoIntantiateEmit]: true,
+    });
+    this.members[id] = roomMember;
+    UserModel.instances[id].roomId = this.id;
+  }
+
+  @sync()
+  public deleteRoomMember(id: string) {
+    const user = this.members[id].user;
+    if (user) {
+      delete this.members[id];
+      user.roomId = undefined;
+    }
   }
 }
 
-export class App extends SharedState {}
+interface ISyncObject {
+  users: string[];
+  rooms: string[];
+}
 
-const classes = [Test];
+@shareableState
+export class MainAppModel extends SharedState {
+  public id = "main";
+
+  public getSyncStateObject = (Constructor: any): ISyncObject => {
+    return {
+      users: Object.keys(this.users),
+      rooms: Object.keys(this.rooms),
+    };
+  };
+
+  public handleSyncStateObject = (object: ISyncObject) => {
+    object.users.forEach((userId) => {
+      if (!this.users[userId]) {
+        this.createUser(userId);
+      }
+    });
+    object.rooms.forEach((roomId) => {
+      if (!this.rooms[roomId]) {
+        this._createRoom(roomId);
+      }
+    });
+  };
+
+  @observable
+  public users: Record<string, UserModel> = {};
+
+  @computed
+  get usersCount() {
+    return Object.keys(this.users).length;
+  }
+
+  @observable
+  public rooms: Record<string, RoomModel> = {};
+
+  public createRoom() {
+    this._createRoom(generateID());
+  }
+
+  @sync()
+  public _createRoom(id: string) {
+    this.rooms[id] = new RoomModel({ id, emitter: this.emitter });
+  }
+
+  @sync()
+  public createUser(id: string, socketId?: string) {
+    console.log("CREATE USER");
+    if (!this.users[id])
+      this.users[id] = new UserModel({
+        id,
+        emitter: this.emitter,
+        [NoIntantiateEmit]: true,
+      });
+    else {
+      if (!this.users[id].active) {
+        this.users[id].active = true;
+        // @ts-ignore
+        clearTimeout(this.users[id].timeout);
+      } else if (socketId) {
+        this.emitter.emitToUser(socketId, "username taken");
+        this.oneTimeSyncDisabledOn();
+      }
+    }
+  }
+
+  @sync()
+  public deleteUser(id: string) {
+    delete this.users[id];
+  }
+}
+
+const classes = [MainAppModel, RoomModel, UserModel, RoomMemberModel];
 
 export { classes };

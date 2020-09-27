@@ -1,6 +1,6 @@
 // import * as M from "./serverModels";
-import { classes } from "models/dist/index";
-import { ServerState } from "models/dist/mobxWebsocket/index";
+import { classes, MainAppModel } from "models/dist/index";
+import { ServerState } from "mobx-websocket";
 
 const server = require("http").createServer();
 const io = require("socket.io")(server);
@@ -10,25 +10,27 @@ const io = require("socket.io")(server);
 // const sharedState = new Test();
 
 const serverState = new ServerState(io, classes);
-// setInterval(() => {
-//   if (serverState.sharedState) {
-//     console.log(serverState.sharedState.test + 1);
-//     serverState.sharedState.setTest(serverState.sharedState.test + 1);
-//   }
-// }, 2000);
-// io.on("connection", (socket: any) => {
-//   console.log("Connected");
-//   let user: UserModel | { error: string };
-//   socket.on("join app", (name: string) => {
-//     user = App.addUser(name);
-//     if (user.error) {
-//       socket.emit();
-//     }
-//   });
-//   socket.on("join room", (room: string) => {
-//     App.addUserToRoom(room, user);
-//   });
-// });
+const appState = new MainAppModel({ emitter: serverState.emitter });
+
+io.on("connection", (socket: any) => {
+  socket.on("join app", (username: string) => {
+    appState.createUser(username, socket.id);
+    socket.username = username;
+    socket.emit("app joined");
+    console.log("JOIN APP");
+  });
+  socket.on("disconnect", () => {
+    if (appState.users[socket.username]) {
+      const username = socket.username;
+      appState.users[socket.username].active = false;
+      // @ts-ignore
+      appState.users[socket.username].timeout = setTimeout(() => {
+        appState.deleteUser(username);
+      }, 60 * 1000 * 5);
+    }
+  });
+  socket.on("join room", (room: string) => {});
+});
 
 console.log("Server listens");
-server.listen(8080);
+server.listen(8081);
